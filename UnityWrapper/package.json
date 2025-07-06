@@ -1,0 +1,26 @@
+{
+  "name": "com.recastnavigation.unitywrapper",
+  "version": "1.0.0",
+  "displayName": "RecastNavigation Unity Wrapper",
+  "description": "Unity Editor Plugin for RecastNavigation - Generate navmesh from OBJ files and visualize in Unity Scene",
+  "unity": "2021.3",
+  "dependencies": {},
+  "keywords": [
+    "navigation",
+    "navmesh",
+    "recast",
+    "pathfinding"
+  ],
+  "author": {
+    "name": "RecastNavigation Unity Wrapper",
+    "email": "your-email@example.com",
+    "url": "https://github.com/recastnavigation/recastnavigation"
+  },
+  "samples": [
+    {
+      "displayName": "Basic NavMesh Generation",
+      "description": "Basic example of generating navmesh from OBJ file",
+      "path": "Samples~/BasicNavMeshGeneration"
+    }
+  ]
+} 

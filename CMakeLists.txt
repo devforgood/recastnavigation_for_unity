@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.16)
 
 project(RecastNavigation)
 
@@ -9,9 +9,9 @@ string(REPLACE "." "," LIB_VERSION_NUM "${LIB_VERSION}.0")
 
 set_property(GLOBAL PROPERTY CXX_STANDARD 98)
 
-option(RECASTNAVIGATION_DEMO "Build demo" ON)
-option(RECASTNAVIGATION_TESTS "Build tests" ON)
-option(RECASTNAVIGATION_EXAMPLES "Build examples" ON)
+option(RECASTNAVIGATION_DEMO "Build demo" OFF)
+option(RECASTNAVIGATION_TESTS "Build tests" OFF)
+option(RECASTNAVIGATION_EXAMPLES "Build examples" OFF)
 option(RECASTNAVIGATION_DT_POLYREF64 "Use 64bit polyrefs instead of 32bit for Detour" OFF)
 option(RECASTNAVIGATION_DT_VIRTUAL_QUERYFILTER "Use dynamic dispatch for dtQueryFilter in Detour to allow for custom filters" OFF)
 option(RECASTNAVIGATION_ENABLE_ASSERTS "Enable custom recastnavigation asserts" "$<IF:$<CONFIG:Debug>,ON,OFF>")
@@ -90,6 +90,9 @@ install(
 if (RECASTNAVIGATION_DEMO)
     add_subdirectory(RecastDemo)
 endif ()
+
+# Add UnityWrapper
+add_subdirectory(UnityWrapper)
 
 if (RECASTNAVIGATION_TESTS)
     enable_testing()
