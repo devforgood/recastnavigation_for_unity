@@ -432,6 +432,11 @@ bool Sample_SoloMesh::handleBuild()
 			  << ", maxVertsPerPoly=" << m_cfg.maxVertsPerPoly << std::endl;
 	g_demoLog << "Input mesh: verts=" << nverts << ", tris=" << ntris << std::endl;
 	g_demoLog << "Grid size: " << m_cfg.width << " x " << m_cfg.height << std::endl;
+	g_demoLog << "Detailed params: cs=" << m_cfg.cs 
+			  << ", ch=" << m_cfg.ch
+			  << ", walkableSlopeAngle=" << m_cfg.walkableSlopeAngle
+			  << ", maxEdgeLen=" << m_cfg.maxEdgeLen
+			  << ", maxSimplificationError=" << m_cfg.maxSimplificationError << std::endl;
 	
 	//
 	// Step 2. Rasterize input polygon soup.
@@ -565,12 +570,15 @@ bool Sample_SoloMesh::handleBuild()
 			return false;
 		}
 		
-		// Partition the walkable surface into simple regions without holes.
-		if (!rcBuildRegions(m_ctx, *m_chf, 0, m_cfg.minRegionArea, m_cfg.mergeRegionArea))
-		{
-			m_ctx->log(RC_LOG_ERROR, "buildNavigation: Could not build watershed regions.");
-			return false;
-		}
+			// Partition the walkable surface into simple regions without holes.
+	if (!rcBuildRegions(m_ctx, *m_chf, 0, m_cfg.minRegionArea, m_cfg.mergeRegionArea))
+	{
+		m_ctx->log(RC_LOG_ERROR, "buildNavigation: Could not build watershed regions.");
+		return false;
+	}
+	
+	// Region 생성 후 로그
+	g_demoLog << "Regions built successfully" << std::endl;
 	}
 	else if (m_partitionType == SAMPLE_PARTITION_MONOTONE)
 	{
@@ -609,6 +617,13 @@ bool Sample_SoloMesh::handleBuild()
 		return false;
 	}
 	
+	// ContourSet 생성 후 로그
+	g_demoLog << "ContourSet created: " << m_cset->nconts << " contours" << std::endl;
+	for (int i = 0; i < m_cset->nconts; ++i)
+	{
+		g_demoLog << "  Contour " << i << ": nverts=" << m_cset->conts[i].nverts << std::endl;
+	}
+	
 	//
 	// Step 6. Build polygons mesh from contours.
 	//
@@ -625,6 +640,9 @@ bool Sample_SoloMesh::handleBuild()
 		m_ctx->log(RC_LOG_ERROR, "buildNavigation: Could not triangulate contours.");
 		return false;
 	}
+	
+	// PolyMesh 생성 후 로그
+	g_demoLog << "PolyMesh created: " << m_pmesh->nverts << " vertices, " << m_pmesh->npolys << " polygons" << std::endl;
 	
 	//
 	// Step 7. Create detail mesh which allows to access approximate height on each polygon.
@@ -732,8 +750,11 @@ bool Sample_SoloMesh::handleBuild()
 		if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
 		{
 			m_ctx->log(RC_LOG_ERROR, "Could not build Detour navmesh.");
+			g_demoLog << "Detour navmesh creation FAILED" << std::endl;
 			return false;
 		}
+		
+		g_demoLog << "Detour navmesh creation SUCCESS" << std::endl;
 		
 		m_navMesh = dtAllocNavMesh();
 		if (!m_navMesh)

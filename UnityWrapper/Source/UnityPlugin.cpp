@@ -155,6 +155,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
         rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
         
         LogHelper::LogPrintf("Grid size: %d x %d\n", cfg.width, cfg.height);
+        LogHelper::LogPrintf("Detailed params: cs=%.2f, ch=%.2f, walkableSlopeAngle=%.2f, maxEdgeLen=%d, maxSimplificationError=%.2f\n",
+                            cfg.cs, cfg.ch, cfg.walkableSlopeAngle, cfg.maxEdgeLen, cfg.maxSimplificationError);
         
         // Reset build times
         ctx.resetTimers();
@@ -268,6 +270,7 @@ EXPORT_API bool GenerateNavMeshFromObj(
         }
         
         LogHelper::LogPrintf("Watershed regions built successfully\n");
+        LogHelper::LogPrintf("Regions built successfully\n");
         
         // Step 4. Trace and simplify region contours
         LogHelper::LogPrintf("Step 4: Tracing and simplifying region contours...\n");
@@ -287,6 +290,12 @@ EXPORT_API bool GenerateNavMeshFromObj(
         }
         
         LogHelper::LogPrintf("ContourSet created: %d contours\n", cset->nconts);
+        // ContourSet 생성 후 로그
+        LogHelper::LogPrintf("ContourSet created: %d contours\n", cset->nconts);
+        for (int i = 0; i < cset->nconts; ++i)
+        {
+            LogHelper::LogPrintf("  Contour %d: nverts=%d\n", i, cset->conts[i].nverts);
+        }
         
         // Step 5. Build and triangulate contours
         LogHelper::LogPrintf("Step 5: Building and triangulating contours...\n");
@@ -309,6 +318,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
             return false;
         }
         
+        LogHelper::LogPrintf("PolyMesh created: %d vertices, %d polygons\n", pmesh->nverts, pmesh->npolys);
+        // PolyMesh 생성 후 로그
         LogHelper::LogPrintf("PolyMesh created: %d vertices, %d polygons\n", pmesh->nverts, pmesh->npolys);
         
         // Step 6. Create detail mesh which allows to access approximate height on each polygon
@@ -434,10 +445,13 @@ EXPORT_API bool GenerateNavMeshFromObj(
             if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
             {
                 LogHelper::LogPrintf("Could not build Detour navmesh.\n");
+                LogHelper::LogPrintf("Detour navmesh creation FAILED\n");
                 rcFreePolyMeshDetail(dmesh);
                 rcFreePolyMesh(pmesh);
                 return false;
             }
+            
+            LogHelper::LogPrintf("Detour navmesh creation SUCCESS\n");
         }
         
         // Free intermediate data
