@@ -20,8 +20,8 @@ namespace RecastNavigation.Unity
         private float walkableClimb = 0.9f;
         private float minRegionArea = 8.0f;
         private float mergeRegionArea = 20.0f;
-        private float maxSimplificationError = 1.3f;
-        private int maxSampleError = 6;
+                        private float maxSimplificationError = 1.3f;
+                private float maxEdgeLen = 12.0f;
         private float detailSampleDistance = 6.0f;
         private float detailSampleMaxError = 1.0f;
         
@@ -123,7 +123,7 @@ namespace RecastNavigation.Unity
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Polygonization", EditorStyles.boldLabel);
                 maxSimplificationError = EditorGUILayout.FloatField("Max Simplification Error", maxSimplificationError);
-                maxSampleError = EditorGUILayout.IntField("Max Sample Error", maxSampleError);
+                maxEdgeLen = EditorGUILayout.FloatField("Max Edge Length", maxEdgeLen);
                 
                 EditorGUILayout.Space();
                 EditorGUILayout.LabelField("Detail Mesh", EditorStyles.boldLabel);
@@ -194,7 +194,7 @@ namespace RecastNavigation.Unity
                     minRegionArea,
                     mergeRegionArea,
                     maxSimplificationError,
-                    maxSampleError,
+                    maxEdgeLen,
                     detailSampleDistance,
                     detailSampleMaxError
                 );

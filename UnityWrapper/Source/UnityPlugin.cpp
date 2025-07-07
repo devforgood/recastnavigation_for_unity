@@ -95,7 +95,7 @@ EXPORT_API bool GenerateNavMeshFromObj(
     float minRegionArea,
     float mergeRegionArea,
     float maxSimplificationError,
-    int maxSampleError,
+    float maxEdgeLen,
     float detailSampleDistance,
     float detailSampleMaxError)
 {
@@ -137,7 +137,7 @@ EXPORT_API bool GenerateNavMeshFromObj(
         cfg.walkableHeight = (int)ceilf(walkableHeight / cfg.ch);
         cfg.walkableClimb = (int)floorf(walkableClimb / cfg.ch);
         cfg.walkableRadius = (int)ceilf(walkableRadius / cfg.cs);
-        cfg.maxEdgeLen = (int)(maxSimplificationError / cellSize);
+        cfg.maxEdgeLen = (int)(maxEdgeLen / cellSize);
         cfg.maxSimplificationError = maxSimplificationError;
         cfg.minRegionArea = (int)rcSqr(minRegionArea);
         cfg.mergeRegionArea = (int)rcSqr(mergeRegionArea);

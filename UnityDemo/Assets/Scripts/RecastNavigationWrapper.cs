@@ -21,7 +21,7 @@ namespace RecastNavigation.Unity
             float minRegionArea,
             float mergeRegionArea,
             float maxSimplificationError,
-            int maxSampleError,
+            float maxEdgeLen,
             float detailSampleDistance,
             float detailSampleMaxError
         );
@@ -66,7 +66,7 @@ namespace RecastNavigation.Unity
             float minRegionArea,
             float mergeRegionArea,
             float maxSimplificationError,
-            int maxSampleError,
+            float maxEdgeLen,
             float detailSampleDistance,
             float detailSampleMaxError)
         {
@@ -87,7 +87,7 @@ namespace RecastNavigation.Unity
                     minRegionArea,
                     mergeRegionArea,
                     maxSimplificationError,
-                    maxSampleError,
+                    maxEdgeLen,
                     detailSampleDistance,
                     detailSampleMaxError
                 );
