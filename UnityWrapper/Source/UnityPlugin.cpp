@@ -141,6 +141,10 @@ EXPORT_API bool GenerateNavMeshFromObj(
         cfg.maxSimplificationError = maxSimplificationError;
         cfg.minRegionArea = (int)rcSqr(minRegionArea);
         cfg.mergeRegionArea = (int)rcSqr(mergeRegionArea);
+        
+        // Ensure minimum values for stability
+        if (cfg.minRegionArea < 8) cfg.minRegionArea = 8;
+        if (cfg.mergeRegionArea < 20) cfg.mergeRegionArea = 20;
         cfg.maxVertsPerPoly = 6;
         cfg.detailSampleDist = detailSampleDistance < 0.9f ? 0 : cellSize * detailSampleDistance;
         cfg.detailSampleMaxError = cellHeight * detailSampleMaxError;
@@ -170,6 +174,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
             rcFreeHeightField(solid);
             return false;
         }
+        
+        LogHelper::LogPrintf("Heightfield created: %d x %d cells\n", solid->width, solid->height);
         
         // Allocate array that can hold triangle area types
         unsigned char* triareas = new unsigned char[ntris];
@@ -216,6 +222,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
             return false;
         }
         
+        LogHelper::LogPrintf("CompactHeightfield created: %d spans\n", chf->spanCount);
+        
         rcFreeHeightField(solid);
         
         // Erode the walkable area by agent radius
@@ -226,12 +234,40 @@ EXPORT_API bool GenerateNavMeshFromObj(
             return false;
         }
         
+        LogHelper::LogPrintf("After erosion: %d spans\n", chf->spanCount);
+        
         // Mark areas
         const ConvexVolume* vols = geom.getConvexVolumes();
         for (int i = 0; i < geom.getConvexVolumeCount(); ++i)
         {
             rcMarkConvexPolyArea(&ctx, vols[i].verts, vols[i].nverts, vols[i].hmin, vols[i].hmax, (unsigned char)vols[i].area, *chf);
         }
+        
+        // Step 3.5. Build regions
+        LogHelper::LogPrintf("Step 3.5: Building regions...\n");
+        LogHelper::LogPrintf("Region params: borderSize=%d, minRegionArea=%d, mergeRegionArea=%d\n", 
+                            cfg.borderSize, cfg.minRegionArea, cfg.mergeRegionArea);
+        
+        // Use Watershed partitioning (same as RecastDemo default)
+        LogHelper::LogPrintf("Using watershed partitioning...\n");
+        
+        // Prepare for region partitioning, by calculating distance field along the walkable surface.
+        if (!rcBuildDistanceField(&ctx, *chf))
+        {
+            LogHelper::LogPrintf("Could not build distance field.\n");
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        // Partition the walkable surface into simple regions without holes.
+        if (!rcBuildRegions(&ctx, *chf, 0, cfg.minRegionArea, cfg.mergeRegionArea))
+        {
+            LogHelper::LogPrintf("Could not build watershed regions.\n");
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        LogHelper::LogPrintf("Watershed regions built successfully\n");
         
         // Step 4. Trace and simplify region contours
         LogHelper::LogPrintf("Step 4: Tracing and simplifying region contours...\n");
@@ -250,8 +286,12 @@ EXPORT_API bool GenerateNavMeshFromObj(
             return false;
         }
         
+        LogHelper::LogPrintf("ContourSet created: %d contours\n", cset->nconts);
+        
         // Step 5. Build and triangulate contours
         LogHelper::LogPrintf("Step 5: Building and triangulating contours...\n");
+        LogHelper::LogPrintf("Contour set info: %d contours\n", cset->nconts);
+        
         rcPolyMesh* pmesh = rcAllocPolyMesh();
         if (!pmesh)
         {
@@ -268,6 +308,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
             rcFreeCompactHeightfield(chf);
             return false;
         }
+        
+        LogHelper::LogPrintf("PolyMesh created: %d vertices, %d polygons\n", pmesh->nverts, pmesh->npolys);
         
         // Step 6. Create detail mesh which allows to access approximate height on each polygon
         LogHelper::LogPrintf("Step 6: Creating detail mesh...\n");
@@ -289,7 +331,7 @@ EXPORT_API bool GenerateNavMeshFromObj(
             rcFreeCompactHeightfield(chf);
             return false;
         }
-        
+
         // Free intermediate data
         rcFreeCompactHeightfield(chf);
         rcFreeContourSet(cset);
@@ -401,20 +443,22 @@ EXPORT_API bool GenerateNavMeshFromObj(
         LogHelper::LogPrintf("Step 8: Saving navmesh data to file...\n");
         if (navData && navDataSize > 0)
         {
-            FILE* file = fopen(outputPath, "wb");
-            if (file)
-            {
+        FILE* file = fopen(outputPath, "wb");
+        if (file)
+        {
                 size_t written = fwrite(navData, 1, navDataSize, file);
                 fclose(file);
                 
                 if (written == (size_t)navDataSize)
                 {
                     LogHelper::LogPrintf("NavMesh data written successfully: %s (%d bytes)\n", outputPath, navDataSize);
+                    LogHelper::LogPrintf("DetailMesh: %d verts, %d tris\n", dmesh->nverts, dmesh->ntris);
+                    LogHelper::LogPrintf("NavMesh file size: %d bytes\n", navDataSize);
                     dtFree(navData);
                     
                     ctx.stopTimer(RC_TIMER_TOTAL);
                     LogHelper::LogPrintf("Total build time: %.2f ms\n", ctx.getAccumulatedTime(RC_TIMER_TOTAL) / 1000.0f);
-                    return true;
+        return true;
                 }
                 else
                 {
