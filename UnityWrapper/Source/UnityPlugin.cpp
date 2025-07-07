@@ -7,6 +7,7 @@
 #include "Recast.h"
 #include "RecastDebugDraw.h"
 #include "DetourNavMeshBuilder.h"
+#include "DetourNavMesh.h"
 #include "InputGeom.h"
 #include "TestCase.h"
 #include "Sample_SoloMesh.h"
@@ -300,6 +301,9 @@ EXPORT_API bool GenerateNavMeshFromObj(
         
         if (cfg.maxVertsPerPoly <= DT_VERTS_PER_POLYGON)
         {
+            LogHelper::LogPrintf("PolyMesh info: %d vertices, %d polygons, maxVertsPerPoly: %d\n", 
+                                pmesh->nverts, pmesh->npolys, pmesh->nvp);
+            
             // Update poly flags from areas
             for (int i = 0; i < pmesh->npolys; ++i)
             {
@@ -341,6 +345,44 @@ EXPORT_API bool GenerateNavMeshFromObj(
             params.cs = cfg.cs;
             params.ch = cfg.ch;
             params.buildBvTree = true;
+            
+            LogHelper::LogPrintf("Detour params: vertCount=%d, polyCount=%d, nvp=%d, detailVertsCount=%d, detailTriCount=%d\n",
+                                params.vertCount, params.polyCount, params.nvp, params.detailVertsCount, params.detailTriCount);
+            LogHelper::LogPrintf("Agent params: height=%.2f, radius=%.2f, climb=%.2f\n",
+                                params.walkableHeight, params.walkableRadius, params.walkableClimb);
+            
+            // Validate parameters before calling dtCreateNavMeshData
+            if (params.vertCount >= 0xffff)
+            {
+                LogHelper::LogPrintf("Error: Too many vertices (%d >= 65535)\n", params.vertCount);
+                rcFreePolyMeshDetail(dmesh);
+                rcFreePolyMesh(pmesh);
+                return false;
+            }
+            
+            if (params.nvp > DT_VERTS_PER_POLYGON)
+            {
+                LogHelper::LogPrintf("Error: Too many vertices per polygon (%d > %d)\n", params.nvp, DT_VERTS_PER_POLYGON);
+                rcFreePolyMeshDetail(dmesh);
+                rcFreePolyMesh(pmesh);
+                return false;
+            }
+            
+            if (!params.vertCount || !params.verts)
+            {
+                LogHelper::LogPrintf("Error: Invalid vertex data\n");
+                rcFreePolyMeshDetail(dmesh);
+                rcFreePolyMesh(pmesh);
+                return false;
+            }
+            
+            if (!params.polyCount || !params.polys)
+            {
+                LogHelper::LogPrintf("Error: Invalid polygon data\n");
+                rcFreePolyMeshDetail(dmesh);
+                rcFreePolyMesh(pmesh);
+                return false;
+            }
             
             if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
             {
