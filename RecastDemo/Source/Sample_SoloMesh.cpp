@@ -423,7 +423,7 @@ bool Sample_SoloMesh::handleBuild()
 	m_ctx->log(RC_LOG_PROGRESS, " - %d x %d cells", m_cfg.width, m_cfg.height);
 	m_ctx->log(RC_LOG_PROGRESS, " - %.1fK verts, %.1fK tris", nverts/1000.0f, ntris/1000.0f);
 	
-	g_demoLog << "Build Start" << std::endl;
+	g_demoLog << "RecastDemo Build Start" << std::endl;
 	g_demoLog << "walkableHeight=" << m_cfg.walkableHeight
 			  << ", walkableRadius=" << m_cfg.walkableRadius
 			  << ", walkableClimb=" << m_cfg.walkableClimb
@@ -630,6 +630,14 @@ bool Sample_SoloMesh::handleBuild()
 	// Step 7. Create detail mesh which allows to access approximate height on each polygon.
 	//
 	
+	// 로그 추가: PolyMesh, CompactHeightfield, DetailMesh 파라미터
+	if (m_pmesh && m_chf)
+	{
+		g_demoLog << "PolyMesh for Detail: nverts=" << m_pmesh->nverts << ", npolys=" << m_pmesh->npolys << std::endl;
+		g_demoLog << "CompactHeightfield for Detail: spanCount=" << m_chf->spanCount << std::endl;
+		g_demoLog << "Detail params: sampleDist=" << m_cfg.detailSampleDist << ", sampleMaxError=" << m_cfg.detailSampleMaxError << std::endl;
+	}
+
 	m_dmesh = rcAllocPolyMeshDetail();
 	if (!m_dmesh)
 	{
@@ -642,6 +650,9 @@ bool Sample_SoloMesh::handleBuild()
 		m_ctx->log(RC_LOG_ERROR, "buildNavigation: Could not build detail mesh.");
 		return false;
 	}
+
+	// DetailMesh 로그
+	g_demoLog << "DetailMesh: " << m_dmesh->nverts << " verts, " << m_dmesh->ntris << " tris" << std::endl;
 
 	if (!m_keepInterResults)
 	{

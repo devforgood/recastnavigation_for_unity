@@ -101,7 +101,7 @@ EXPORT_API bool GenerateNavMeshFromObj(
 {
     try
     {
-        LogHelper::LogPrintf("Starting NavMesh generation from: %s\n", objFilePath);
+        LogHelper::LogPrintf("UnityWrapper Starting NavMesh generation from: %s\n", objFilePath);
         
         // Create build context
         rcContext ctx;
@@ -313,6 +313,10 @@ EXPORT_API bool GenerateNavMeshFromObj(
         
         // Step 6. Create detail mesh which allows to access approximate height on each polygon
         LogHelper::LogPrintf("Step 6: Creating detail mesh...\n");
+        // PolyMesh, CompactHeightfield, DetailMesh 파라미터 로그
+        LogHelper::LogPrintf("PolyMesh for Detail: nverts=%d, npolys=%d\n", pmesh->nverts, pmesh->npolys);
+        LogHelper::LogPrintf("CompactHeightfield for Detail: spanCount=%d\n", chf->spanCount);
+        LogHelper::LogPrintf("Detail params: sampleDist=%.2f, sampleMaxError=%.2f\n", cfg.detailSampleDist, cfg.detailSampleMaxError);
         rcPolyMeshDetail* dmesh = rcAllocPolyMeshDetail();
         if (!dmesh)
         {
@@ -331,7 +335,8 @@ EXPORT_API bool GenerateNavMeshFromObj(
             rcFreeCompactHeightfield(chf);
             return false;
         }
-
+        LogHelper::LogPrintf("DetailMesh: %d verts, %d tris\n", dmesh->nverts, dmesh->ntris);
+        
         // Free intermediate data
         rcFreeCompactHeightfield(chf);
         rcFreeContourSet(cset);
@@ -452,9 +457,6 @@ EXPORT_API bool GenerateNavMeshFromObj(
                 if (written == (size_t)navDataSize)
                 {
                     LogHelper::LogPrintf("NavMesh data written successfully: %s (%d bytes)\n", outputPath, navDataSize);
-                    LogHelper::LogPrintf("DetailMesh: %d verts, %d tris\n", dmesh->nverts, dmesh->ntris);
-                    LogHelper::LogPrintf("NavMesh file size: %d bytes\n", navDataSize);
-                    dtFree(navData);
                     
                     ctx.stopTimer(RC_TIMER_TOTAL);
                     LogHelper::LogPrintf("Total build time: %.2f ms\n", ctx.getAccumulatedTime(RC_TIMER_TOTAL) / 1000.0f);
