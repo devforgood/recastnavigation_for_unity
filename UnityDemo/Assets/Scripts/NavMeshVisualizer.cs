@@ -117,7 +117,8 @@ namespace RecastNavigation.Unity
                     lineRenderer.material = lineMaterial;
                     lineRenderer.startWidth = lineWidth;
                     lineRenderer.endWidth = lineWidth;
-                    lineRenderer.color = navMeshColor;
+                    lineRenderer.startColor = navMeshColor;
+                    lineRenderer.endColor = navMeshColor;
                     lineRenderer.useWorldSpace = true;
                     lineRenderer.loop = true;
                     
