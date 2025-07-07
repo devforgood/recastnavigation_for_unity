@@ -6,6 +6,7 @@
 // RecastNavigation includes
 #include "Recast.h"
 #include "RecastDebugDraw.h"
+#include "DetourNavMeshBuilder.h"
 #include "InputGeom.h"
 #include "TestCase.h"
 #include "Sample_SoloMesh.h"
@@ -13,11 +14,52 @@
 #include "SampleInterfaces.h"
 #include "MeshLoaderObj.h"
 
+// Logging helper
+#include "LogHelper.h"
+
 // Unity plugin exports
 #ifdef _WIN32
 #define EXPORT_API __declspec(dllexport)
 #else
 #define EXPORT_API __attribute__((visibility("default")))
+#endif
+
+// DLL entry point for Windows
+#ifdef _WIN32
+#include <windows.h>
+
+BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserved)
+{
+    switch (ul_reason_for_call)
+    {
+    case DLL_PROCESS_ATTACH:
+        // Initialize logging when DLL is loaded
+        LogHelper::Initialize();
+        break;
+    case DLL_THREAD_ATTACH:
+        break;
+    case DLL_THREAD_DETACH:
+        break;
+    case DLL_PROCESS_DETACH:
+        // Cleanup logging when DLL is unloaded
+        LogHelper::Cleanup();
+        break;
+    }
+    return TRUE;
+}
+#else
+// Constructor and destructor for Linux/macOS shared libraries
+__attribute__((constructor))
+void InitializeLibrary()
+{
+    LogHelper::Initialize();
+}
+
+__attribute__((destructor))
+void CleanupLibrary()
+{
+    LogHelper::Cleanup();
+}
 #endif
 
 extern "C" {
@@ -58,32 +100,303 @@ EXPORT_API bool GenerateNavMeshFromObj(
 {
     try
     {
-        // Load input geometry (simplified version without BuildContext)
+        LogHelper::LogPrintf("Starting NavMesh generation from: %s\n", objFilePath);
+        
+        // Create build context
+        rcContext ctx;
+        
+        // Load input geometry
         InputGeom geom;
-        if (!geom.load(nullptr, objFilePath))
+        if (!geom.load(&ctx, objFilePath))
         {
-            printf("Failed to load mesh: %s\n", objFilePath);
+            LogHelper::LogPrintf("Failed to load mesh: %s\n", objFilePath);
             return false;
         }
 
-        // For now, we'll just load the mesh and return success
-        // The actual navmesh generation will be implemented later
-        printf("Mesh loaded successfully: %s\n", objFilePath);
+        LogHelper::LogPrintf("Mesh loaded successfully: %s\n", objFilePath);
         
-        // Create a simple output file to indicate success
-        FILE* file = fopen(outputPath, "wb");
-        if (file)
+        // Get mesh bounds and data
+        const float* bmin = geom.getNavMeshBoundsMin();
+        const float* bmax = geom.getNavMeshBoundsMax();
+        const float* verts = geom.getMesh()->getVerts();
+        const int nverts = geom.getMesh()->getVertCount();
+        const int* tris = geom.getMesh()->getTris();
+        const int ntris = geom.getMesh()->getTriCount();
+        
+        LogHelper::LogPrintf("Mesh bounds: [%.2f, %.2f, %.2f] to [%.2f, %.2f, %.2f]\n", 
+               bmin[0], bmin[1], bmin[2], bmax[0], bmax[1], bmax[2]);
+        LogHelper::LogPrintf("Vertices: %d, Triangles: %d\n", nverts, ntris);
+        
+        // Initialize build configuration
+        rcConfig cfg;
+        memset(&cfg, 0, sizeof(cfg));
+        cfg.cs = cellSize;
+        cfg.ch = cellHeight;
+        cfg.walkableSlopeAngle = walkableSlopeAngle;
+        cfg.walkableHeight = (int)ceilf(walkableHeight / cfg.ch);
+        cfg.walkableClimb = (int)floorf(walkableClimb / cfg.ch);
+        cfg.walkableRadius = (int)ceilf(walkableRadius / cfg.cs);
+        cfg.maxEdgeLen = (int)(maxSimplificationError / cellSize);
+        cfg.maxSimplificationError = maxSimplificationError;
+        cfg.minRegionArea = (int)rcSqr(minRegionArea);
+        cfg.mergeRegionArea = (int)rcSqr(mergeRegionArea);
+        cfg.maxVertsPerPoly = 6;
+        cfg.detailSampleDist = detailSampleDistance < 0.9f ? 0 : cellSize * detailSampleDistance;
+        cfg.detailSampleMaxError = cellHeight * detailSampleMaxError;
+        
+        // Set the area where the navigation will be built
+        rcVcopy(cfg.bmin, bmin);
+        rcVcopy(cfg.bmax, bmax);
+        rcCalcGridSize(cfg.bmin, cfg.bmax, cfg.cs, &cfg.width, &cfg.height);
+        
+        LogHelper::LogPrintf("Grid size: %d x %d\n", cfg.width, cfg.height);
+        
+        // Reset build times
+        ctx.resetTimers();
+        ctx.startTimer(RC_TIMER_TOTAL);
+        
+        // Step 1. Rasterize input polygon soup
+        LogHelper::LogPrintf("Step 1: Rasterizing input polygon soup...\n");
+        rcHeightfield* solid = rcAllocHeightfield();
+        if (!solid)
         {
-            fclose(file);
-            printf("Output file created: %s\n", outputPath);
+            LogHelper::LogPrintf("Out of memory 'solid'.\n");
+            return false;
+        }
+        if (!rcCreateHeightfield(&ctx, *solid, cfg.width, cfg.height, cfg.bmin, cfg.bmax, cfg.cs, cfg.ch))
+        {
+            LogHelper::LogPrintf("Could not create solid heightfield.\n");
+            rcFreeHeightField(solid);
+            return false;
         }
         
-        printf("NavMesh generated successfully: %s\n", outputPath);
-        return true;
+        // Allocate array that can hold triangle area types
+        unsigned char* triareas = new unsigned char[ntris];
+        if (!triareas)
+        {
+            LogHelper::LogPrintf("Out of memory 'triareas'.\n");
+            rcFreeHeightField(solid);
+            return false;
+        }
+        
+        // Find triangles which are walkable based on their slope and rasterize them
+        memset(triareas, 0, ntris * sizeof(unsigned char));
+        rcMarkWalkableTriangles(&ctx, cfg.walkableSlopeAngle, verts, nverts, tris, ntris, triareas);
+        if (!rcRasterizeTriangles(&ctx, verts, nverts, tris, triareas, ntris, *solid, cfg.walkableClimb))
+        {
+            LogHelper::LogPrintf("Could not rasterize triangles.\n");
+            delete[] triareas;
+            rcFreeHeightField(solid);
+            return false;
+        }
+        
+        delete[] triareas;
+        
+        // Step 2. Filter walkable surfaces
+        LogHelper::LogPrintf("Step 2: Filtering walkable surfaces...\n");
+        rcFilterLowHangingWalkableObstacles(&ctx, cfg.walkableClimb, *solid);
+        rcFilterLedgeSpans(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid);
+        rcFilterWalkableLowHeightSpans(&ctx, cfg.walkableHeight, *solid);
+        
+        // Step 3. Partition walkable surface to simple regions
+        LogHelper::LogPrintf("Step 3: Partitioning walkable surface...\n");
+        rcCompactHeightfield* chf = rcAllocCompactHeightfield();
+        if (!chf)
+        {
+            LogHelper::LogPrintf("Out of memory 'chf'.\n");
+            rcFreeHeightField(solid);
+            return false;
+        }
+        if (!rcBuildCompactHeightfield(&ctx, cfg.walkableHeight, cfg.walkableClimb, *solid, *chf))
+        {
+            LogHelper::LogPrintf("Could not build compact heightfield.\n");
+            rcFreeCompactHeightfield(chf);
+            rcFreeHeightField(solid);
+            return false;
+        }
+        
+        rcFreeHeightField(solid);
+        
+        // Erode the walkable area by agent radius
+        if (!rcErodeWalkableArea(&ctx, cfg.walkableRadius, *chf))
+        {
+            LogHelper::LogPrintf("Could not erode walkable area.\n");
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        // Mark areas
+        const ConvexVolume* vols = geom.getConvexVolumes();
+        for (int i = 0; i < geom.getConvexVolumeCount(); ++i)
+        {
+            rcMarkConvexPolyArea(&ctx, vols[i].verts, vols[i].nverts, vols[i].hmin, vols[i].hmax, (unsigned char)vols[i].area, *chf);
+        }
+        
+        // Step 4. Trace and simplify region contours
+        LogHelper::LogPrintf("Step 4: Tracing and simplifying region contours...\n");
+        rcContourSet* cset = rcAllocContourSet();
+        if (!cset)
+        {
+            LogHelper::LogPrintf("Out of memory 'cset'.\n");
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        if (!rcBuildContours(&ctx, *chf, cfg.maxSimplificationError, cfg.maxEdgeLen, *cset))
+        {
+            LogHelper::LogPrintf("Could not build contours.\n");
+            rcFreeContourSet(cset);
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        // Step 5. Build and triangulate contours
+        LogHelper::LogPrintf("Step 5: Building and triangulating contours...\n");
+        rcPolyMesh* pmesh = rcAllocPolyMesh();
+        if (!pmesh)
+        {
+            LogHelper::LogPrintf("Out of memory 'pmesh'.\n");
+            rcFreeContourSet(cset);
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        if (!rcBuildPolyMesh(&ctx, *cset, cfg.maxVertsPerPoly, *pmesh))
+        {
+            LogHelper::LogPrintf("Could not triangulate contours.\n");
+            rcFreePolyMesh(pmesh);
+            rcFreeContourSet(cset);
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        // Step 6. Create detail mesh which allows to access approximate height on each polygon
+        LogHelper::LogPrintf("Step 6: Creating detail mesh...\n");
+        rcPolyMeshDetail* dmesh = rcAllocPolyMeshDetail();
+        if (!dmesh)
+        {
+            LogHelper::LogPrintf("Out of memory 'dmesh'.\n");
+            rcFreePolyMesh(pmesh);
+            rcFreeContourSet(cset);
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        if (!rcBuildPolyMeshDetail(&ctx, *pmesh, *chf, cfg.detailSampleDist, cfg.detailSampleMaxError, *dmesh))
+        {
+            LogHelper::LogPrintf("Could not build polymesh detail.\n");
+            rcFreePolyMeshDetail(dmesh);
+            rcFreePolyMesh(pmesh);
+            rcFreeContourSet(cset);
+            rcFreeCompactHeightfield(chf);
+            return false;
+        }
+        
+        // Free intermediate data
+        rcFreeCompactHeightfield(chf);
+        rcFreeContourSet(cset);
+        
+        // Step 7. Create Detour data from Recast poly mesh
+        LogHelper::LogPrintf("Step 7: Creating Detour data...\n");
+        unsigned char* navData = 0;
+        int navDataSize = 0;
+        
+        if (cfg.maxVertsPerPoly <= DT_VERTS_PER_POLYGON)
+        {
+            // Update poly flags from areas
+            for (int i = 0; i < pmesh->npolys; ++i)
+            {
+                if (pmesh->areas[i] == RC_WALKABLE_AREA)
+                    pmesh->areas[i] = 1; // SAMPLE_POLYAREA_GROUND
+                    
+                if (pmesh->areas[i] == 1) // SAMPLE_POLYAREA_GROUND
+                {
+                    pmesh->flags[i] = 1; // SAMPLE_POLYFLAGS_WALK
+                }
+            }
+            
+            dtNavMeshCreateParams params;
+            memset(&params, 0, sizeof(params));
+            params.verts = pmesh->verts;
+            params.vertCount = pmesh->nverts;
+            params.polys = pmesh->polys;
+            params.polyAreas = pmesh->areas;
+            params.polyFlags = pmesh->flags;
+            params.polyCount = pmesh->npolys;
+            params.nvp = pmesh->nvp;
+            params.detailMeshes = dmesh->meshes;
+            params.detailVerts = dmesh->verts;
+            params.detailVertsCount = dmesh->nverts;
+            params.detailTris = dmesh->tris;
+            params.detailTriCount = dmesh->ntris;
+            params.offMeshConVerts = geom.getOffMeshConnectionVerts();
+            params.offMeshConRad = geom.getOffMeshConnectionRads();
+            params.offMeshConDir = geom.getOffMeshConnectionDirs();
+            params.offMeshConAreas = geom.getOffMeshConnectionAreas();
+            params.offMeshConFlags = geom.getOffMeshConnectionFlags();
+            params.offMeshConUserID = geom.getOffMeshConnectionId();
+            params.offMeshConCount = geom.getOffMeshConnectionCount();
+            params.walkableHeight = walkableHeight;
+            params.walkableRadius = walkableRadius;
+            params.walkableClimb = walkableClimb;
+            rcVcopy(params.bmin, pmesh->bmin);
+            rcVcopy(params.bmax, pmesh->bmax);
+            params.cs = cfg.cs;
+            params.ch = cfg.ch;
+            params.buildBvTree = true;
+            
+            if (!dtCreateNavMeshData(&params, &navData, &navDataSize))
+            {
+                LogHelper::LogPrintf("Could not build Detour navmesh.\n");
+                rcFreePolyMeshDetail(dmesh);
+                rcFreePolyMesh(pmesh);
+                return false;
+            }
+        }
+        
+        // Free intermediate data
+        rcFreePolyMeshDetail(dmesh);
+        rcFreePolyMesh(pmesh);
+        
+        // Step 8. Save navmesh data to file
+        LogHelper::LogPrintf("Step 8: Saving navmesh data to file...\n");
+        if (navData && navDataSize > 0)
+        {
+            FILE* file = fopen(outputPath, "wb");
+            if (file)
+            {
+                size_t written = fwrite(navData, 1, navDataSize, file);
+                fclose(file);
+                
+                if (written == (size_t)navDataSize)
+                {
+                    LogHelper::LogPrintf("NavMesh data written successfully: %s (%d bytes)\n", outputPath, navDataSize);
+                    dtFree(navData);
+                    
+                    ctx.stopTimer(RC_TIMER_TOTAL);
+                    LogHelper::LogPrintf("Total build time: %.2f ms\n", ctx.getAccumulatedTime(RC_TIMER_TOTAL) / 1000.0f);
+                    return true;
+                }
+                else
+                {
+                    LogHelper::LogPrintf("Failed to write complete navmesh data to file.\n");
+                    dtFree(navData);
+                    return false;
+                }
+            }
+            else
+            {
+                LogHelper::LogPrintf("Could not open output file for writing: %s\n", outputPath);
+                dtFree(navData);
+                return false;
+            }
+        }
+        else
+        {
+            LogHelper::LogPrintf("No navmesh data generated.\n");
+            return false;
+        }
     }
     catch (const std::exception& e)
     {
-        printf("Exception during navmesh generation: %s\n", e.what());
+        LogHelper::LogPrintf("Exception during navmesh generation: %s\n", e.what());
         return false;
     }
 }
@@ -97,7 +410,7 @@ EXPORT_API UnityNavMeshData* LoadNavMeshFromFile(const char* filePath)
         InputGeom geom;
         if (!geom.load(nullptr, filePath))
         {
-            printf("Failed to load navmesh file: %s\n", filePath);
+            LogHelper::LogPrintf("Failed to load navmesh file: %s\n", filePath);
             return nullptr;
         }
         
@@ -120,7 +433,7 @@ EXPORT_API UnityNavMeshData* LoadNavMeshFromFile(const char* filePath)
         const rcChunkyTriMesh* chunkyMesh = geom.getChunkyMesh();
         if (!mesh || !chunkyMesh)
         {
-            printf("No mesh data available\n");
+            LogHelper::LogPrintf("No mesh data available\n");
             delete navMeshData;
             return nullptr;
         }
@@ -158,12 +471,12 @@ EXPORT_API UnityNavMeshData* LoadNavMeshFromFile(const char* filePath)
         // Store in global list for cleanup
         g_navMeshDataList.push_back(navMeshData);
         
-        printf("NavMesh loaded successfully: %s (polygons: %d)\n", filePath, navMeshData->polygonCount);
+        LogHelper::LogPrintf("NavMesh loaded successfully: %s (polygons: %d)\n", filePath, navMeshData->polygonCount);
         return navMeshData;
     }
     catch (const std::exception& e)
     {
-        printf("Exception during navmesh loading: %s\n", e.what());
+        LogHelper::LogPrintf("Exception during navmesh loading: %s\n", e.what());
         return nullptr;
     }
 }

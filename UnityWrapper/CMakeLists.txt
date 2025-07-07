@@ -21,6 +21,7 @@ include_directories(../RecastDemo/Contrib)
 # Source files for Unity plugin (simplified version)
 set(UNITY_PLUGIN_SOURCES
     Source/UnityPlugin.cpp
+    Source/LogHelper.cpp
     Source/MeshLoaderObj.cpp
     Source/InputGeom.cpp
     Source/ChunkyTriMesh.cpp
