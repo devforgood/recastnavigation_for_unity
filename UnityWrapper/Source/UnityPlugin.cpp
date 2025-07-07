@@ -8,6 +8,7 @@
 #include "RecastDebugDraw.h"
 #include "DetourNavMeshBuilder.h"
 #include "DetourNavMesh.h"
+#include "DetourNavMeshQuery.h"
 #include "InputGeom.h"
 #include "TestCase.h"
 #include "Sample_SoloMesh.h"
@@ -65,6 +66,25 @@ void CleanupLibrary()
 
 extern "C" {
 
+// NavMesh file format structures (from RecastDemo)
+struct NavMeshSetHeader
+{
+    int magic;
+    int version;
+    int numTiles;
+    dtNavMeshParams params;
+};
+
+struct NavMeshTileHeader
+{
+    dtTileRef tileRef;
+    int dataSize;
+};
+
+// Magic numbers for navmesh file format
+static const int NAVMESHSET_MAGIC = 'M'<<24 | 'S'<<16 | 'E'<<8 | 'T'; // 'MSET'
+static const int NAVMESHSET_VERSION = 1;
+
 // NavMesh data structure for Unity
 struct UnityNavMeshPolygon {
     float* vertices;
@@ -77,6 +97,8 @@ struct UnityNavMeshData {
     UnityNavMeshPolygon* polygons;
     int polygonCount;
     float bounds[6]; // minX, minY, minZ, maxX, maxY, maxZ
+    dtNavMesh* navMesh;
+    dtNavMeshQuery* navQuery;
 };
 
 // Global variables for managing navmesh data
@@ -462,30 +484,74 @@ EXPORT_API bool GenerateNavMeshFromObj(
         LogHelper::LogPrintf("Step 8: Saving navmesh data to file...\n");
         if (navData && navDataSize > 0)
         {
-        FILE* file = fopen(outputPath, "wb");
-        if (file)
-        {
-                size_t written = fwrite(navData, 1, navDataSize, file);
+            // Create a temporary navmesh to get the proper file format
+            dtNavMesh* tempNavMesh = dtAllocNavMesh();
+            if (!tempNavMesh)
+            {
+                LogHelper::LogPrintf("Failed to allocate temporary navmesh for saving\n");
+                dtFree(navData);
+                return false;
+            }
+            
+            // Initialize the temporary navmesh with the generated data
+            dtStatus status = tempNavMesh->init(navData, navDataSize, DT_TILE_FREE_DATA);
+            if (dtStatusFailed(status))
+            {
+                LogHelper::LogPrintf("Failed to initialize temporary navmesh for saving. Status: %d\n", status);
+                dtFreeNavMesh(tempNavMesh);
+                dtFree(navData);
+                return false;
+            }
+            
+            // Save using the proper file format (like RecastDemo's saveAll)
+            FILE* file = fopen(outputPath, "wb");
+            if (file)
+            {
+                // Store header
+                NavMeshSetHeader header;
+                header.magic = NAVMESHSET_MAGIC;
+                header.version = NAVMESHSET_VERSION;
+                header.numTiles = 0;
+                
+                // Count tiles
+                for (int i = 0; i < tempNavMesh->getMaxTiles(); ++i)
+                {
+                    const dtMeshTile* tile = ((const dtNavMesh * )tempNavMesh)->getTile(i);
+                    if (!tile || !tile->header || !tile->dataSize) continue;
+                    header.numTiles++;
+                }
+                
+                memcpy(&header.params, tempNavMesh->getParams(), sizeof(dtNavMeshParams));
+                fwrite(&header, sizeof(NavMeshSetHeader), 1, file);
+                
+                // Store tiles
+                for (int i = 0; i < tempNavMesh->getMaxTiles(); ++i)
+                {
+                    const dtMeshTile* tile = ((const dtNavMesh*)tempNavMesh)->getTile(i);
+                    if (!tile || !tile->header || !tile->dataSize) continue;
+                    
+                    NavMeshTileHeader tileHeader;
+                    tileHeader.tileRef = tempNavMesh->getTileRef(tile);
+                    tileHeader.dataSize = tile->dataSize;
+                    fwrite(&tileHeader, sizeof(tileHeader), 1, file);
+                    
+                    fwrite(tile->data, tile->dataSize, 1, file);
+                }
+                
                 fclose(file);
                 
-                if (written == (size_t)navDataSize)
-                {
-                    LogHelper::LogPrintf("NavMesh data written successfully: %s (%d bytes)\n", outputPath, navDataSize);
-                    
-                    ctx.stopTimer(RC_TIMER_TOTAL);
-                    LogHelper::LogPrintf("Total build time: %.2f ms\n", ctx.getAccumulatedTime(RC_TIMER_TOTAL) / 1000.0f);
-        return true;
-                }
-                else
-                {
-                    LogHelper::LogPrintf("Failed to write complete navmesh data to file.\n");
-                    dtFree(navData);
-                    return false;
-                }
+                LogHelper::LogPrintf("NavMesh data written successfully with proper header: %s (%d tiles)\n", outputPath, header.numTiles);
+                
+                ctx.stopTimer(RC_TIMER_TOTAL);
+                LogHelper::LogPrintf("Total build time: %.2f ms\n", ctx.getAccumulatedTime(RC_TIMER_TOTAL) / 1000.0f);
+                
+                dtFreeNavMesh(tempNavMesh);
+                return true;
             }
             else
             {
                 LogHelper::LogPrintf("Could not open output file for writing: %s\n", outputPath);
+                dtFreeNavMesh(tempNavMesh);
                 dtFree(navData);
                 return false;
             }
@@ -508,67 +574,173 @@ EXPORT_API UnityNavMeshData* LoadNavMeshFromFile(const char* filePath)
 {
     try
     {
-        // Load navmesh data (simplified version without BuildContext)
-        InputGeom geom;
-        if (!geom.load(nullptr, filePath))
+        LogHelper::LogPrintf("Loading NavMesh from file: %s\n", filePath);
+        
+        // Open and read the navmesh file
+        FILE* file = fopen(filePath, "rb");
+        if (!file)
         {
-            LogHelper::LogPrintf("Failed to load navmesh file: %s\n", filePath);
+            LogHelper::LogPrintf("Could not open navmesh file: %s\n", filePath);
             return nullptr;
         }
         
-        // Create navmesh data structure
+        // Read header
+        NavMeshSetHeader header;
+        size_t readLen = fread(&header, sizeof(NavMeshSetHeader), 1, file);
+        if (readLen != 1)
+        {
+            LogHelper::LogPrintf("Failed to read navmesh header\n");
+            fclose(file);
+            return nullptr;
+        }
+        
+        if (header.magic != NAVMESHSET_MAGIC)
+        {
+            LogHelper::LogPrintf("Invalid navmesh file magic: %d (expected: %d)\n", header.magic, NAVMESHSET_MAGIC);
+            fclose(file);
+            return nullptr;
+        }
+        
+        if (header.version != NAVMESHSET_VERSION)
+        {
+            LogHelper::LogPrintf("Invalid navmesh file version: %d (expected: %d)\n", header.version, NAVMESHSET_VERSION);
+            fclose(file);
+            return nullptr;
+        }
+        
+        LogHelper::LogPrintf("Navmesh header: magic=%d, version=%d, numTiles=%d\n", header.magic, header.version, header.numTiles);
+        
+        // Create Detour navmesh
+        dtNavMesh* navMesh = dtAllocNavMesh();
+        if (!navMesh)
+        {
+            LogHelper::LogPrintf("Failed to allocate navmesh\n");
+            fclose(file);
+            return nullptr;
+        }
+        
+        // Initialize navmesh with header params
+        dtStatus status = navMesh->init(&header.params);
+        if (dtStatusFailed(status))
+        {
+            LogHelper::LogPrintf("Failed to initialize navmesh. Status: %d\n", status);
+            dtFreeNavMesh(navMesh);
+            fclose(file);
+            return nullptr;
+        }
+        
+        // Read tiles
+        for (int i = 0; i < header.numTiles; ++i)
+        {
+            NavMeshTileHeader tileHeader;
+            readLen = fread(&tileHeader, sizeof(tileHeader), 1, file);
+            if (readLen != 1)
+            {
+                LogHelper::LogPrintf("Failed to read tile header %d\n", i);
+                dtFreeNavMesh(navMesh);
+                fclose(file);
+                return nullptr;
+            }
+            
+            if (!tileHeader.tileRef || !tileHeader.dataSize)
+                break;
+            
+            unsigned char* data = (unsigned char*)dtAlloc(tileHeader.dataSize, DT_ALLOC_PERM);
+            if (!data)
+            {
+                LogHelper::LogPrintf("Failed to allocate tile data for tile %d\n", i);
+                dtFreeNavMesh(navMesh);
+                fclose(file);
+                return nullptr;
+            }
+            
+            memset(data, 0, tileHeader.dataSize);
+            readLen = fread(data, tileHeader.dataSize, 1, file);
+            if (readLen != 1)
+            {
+                LogHelper::LogPrintf("Failed to read tile data for tile %d\n", i);
+                dtFree(data);
+                dtFreeNavMesh(navMesh);
+                fclose(file);
+                return nullptr;
+            }
+            
+            navMesh->addTile(data, tileHeader.dataSize, DT_TILE_FREE_DATA, tileHeader.tileRef, 0);
+        }
+        
+        fclose(file);
+        
+        LogHelper::LogPrintf("Navmesh initialized successfully\n");
+        
+        // Create navmesh query
+        dtNavMeshQuery* navQuery = new dtNavMeshQuery();
+        if (!navQuery)
+        {
+            LogHelper::LogPrintf("Failed to allocate navmesh query\n");
+            dtFreeNavMesh(navMesh);
+            return nullptr;
+        }
+        
+        status = navQuery->init(navMesh, 2048);
+        if (dtStatusFailed(status))
+        {
+            LogHelper::LogPrintf("Failed to initialize navmesh query. Status: %d\n", status);
+            delete navQuery;
+            dtFreeNavMesh(navMesh);
+            return nullptr;
+        }
+        
+        // Get navmesh bounds from tile header
+        const dtMeshTile* tile = navMesh->getTileAt(0, 0, 0);
+        if (!tile || !tile->header)
+        {
+            LogHelper::LogPrintf("No tile data available\n");
+            delete navQuery;
+            dtFreeNavMesh(navMesh);
+            return nullptr;
+        }
+        
+        // Create Unity navmesh data structure
         UnityNavMeshData* navMeshData = new UnityNavMeshData();
+        navMeshData->bounds[0] = tile->header->bmin[0]; // minX
+        navMeshData->bounds[1] = tile->header->bmin[1]; // minY
+        navMeshData->bounds[2] = tile->header->bmin[2]; // minZ
+        navMeshData->bounds[3] = tile->header->bmax[0]; // maxX
+        navMeshData->bounds[4] = tile->header->bmax[1]; // maxY
+        navMeshData->bounds[5] = tile->header->bmax[2]; // maxZ
         
-        // Get mesh bounds
-        const float* bmin = geom.getMeshBoundsMin();
-        const float* bmax = geom.getMeshBoundsMax();
-        
-        navMeshData->bounds[0] = bmin[0]; // minX
-        navMeshData->bounds[1] = bmin[1]; // minY
-        navMeshData->bounds[2] = bmin[2]; // minZ
-        navMeshData->bounds[3] = bmax[0]; // maxX
-        navMeshData->bounds[4] = bmax[1]; // maxY
-        navMeshData->bounds[5] = bmax[2]; // maxZ
-        
-        // Get mesh data
-        const rcMeshLoaderObj* mesh = geom.getMesh();
-        const rcChunkyTriMesh* chunkyMesh = geom.getChunkyMesh();
-        if (!mesh || !chunkyMesh)
-        {
-            LogHelper::LogPrintf("No mesh data available\n");
-            delete navMeshData;
-            return nullptr;
-        }
-        
-        // Count polygons
-        navMeshData->polygonCount = chunkyMesh->ntris;
+        const dtMeshHeader* meshHeader = tile->header;
+        navMeshData->polygonCount = meshHeader->polyCount;
         navMeshData->polygons = new UnityNavMeshPolygon[navMeshData->polygonCount];
+        
+        LogHelper::LogPrintf("Extracting %d polygons from navmesh\n", navMeshData->polygonCount);
         
         // Extract polygon data
         for (int i = 0; i < navMeshData->polygonCount; i++)
         {
             UnityNavMeshPolygon& polygon = navMeshData->polygons[i];
+            const dtPoly* poly = &tile->polys[i];
             
-            // Get triangle data
-            const int* tris = &chunkyMesh->tris[i * 3];
-            const float* verts = mesh->getVerts();
+            // Get polygon vertices
+            polygon.vertexCount = poly->vertCount;
+            polygon.vertices = new float[polygon.vertexCount * 3];
             
-            polygon.vertexCount = 3; // Triangles
-            polygon.vertices = new float[9]; // 3 vertices * 3 components
-            
-            // Copy vertices
-            for (int j = 0; j < 3; j++)
+            for (int j = 0; j < polygon.vertexCount; j++)
             {
-                const float* v = &verts[tris[j] * 3];
+                const float* v = &tile->verts[poly->verts[j] * 3];
                 polygon.vertices[j * 3] = v[0];
                 polygon.vertices[j * 3 + 1] = v[1];
                 polygon.vertices[j * 3 + 2] = v[2];
             }
             
-            // Set default area and flags
-            polygon.area = 1; // Walkable
-            polygon.flags = 0;
+            // Get area and flags
+            polygon.area = poly->getArea();
+            polygon.flags = poly->flags;
         }
+        
+        // Store navmesh and query for later use
+        navMeshData->navMesh = navMesh;
+        navMeshData->navQuery = navQuery;
         
         // Store in global list for cleanup
         g_navMeshDataList.push_back(navMeshData);
@@ -595,6 +767,20 @@ EXPORT_API void FreeNavMeshData(UnityNavMeshData* navMeshData)
     }
     
     delete[] navMeshData->polygons;
+    
+    // Free Detour objects
+    if (navMeshData->navQuery)
+    {
+        delete navMeshData->navQuery;
+        navMeshData->navQuery = nullptr;
+    }
+    
+    if (navMeshData->navMesh)
+    {
+        dtFreeNavMesh(navMeshData->navMesh);
+        navMeshData->navMesh = nullptr;
+    }
+    
     delete navMeshData;
     
     // Remove from global list
