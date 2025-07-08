@@ -23,6 +23,7 @@ namespace RecastNavigation.Unity
         [Header("Debug Info")]
         [SerializeField] private bool showDebugInfo = true;
         [SerializeField] private bool logNavMeshInfo = false;
+        [SerializeField] private bool showCoordinateConversion = false;
         
         private List<GameObject> visualizationObjects = new List<GameObject>();
         private Material lineMaterial;
@@ -274,6 +275,28 @@ namespace RecastNavigation.Unity
             // Draw bounds
             Gizmos.color = Color.yellow;
             Gizmos.DrawWireCube(navMeshData.bounds.center, navMeshData.bounds.size);
+            
+            // Show coordinate conversion info
+            if (showCoordinateConversion && navMeshData.polygons != null && navMeshData.polygons.Length > 0)
+            {
+                var firstPoly = navMeshData.polygons[0];
+                if (firstPoly.vertices != null && firstPoly.vertices.Length > 0)
+                {
+                    Vector3 sampleVertex = firstPoly.vertices[0];
+                    Vector3 recastVertex = RecastNavigationWrapper.UnityToRecast(sampleVertex);
+                    Vector3 unityVertex = RecastNavigationWrapper.RecastToUnity(recastVertex);
+                    
+                    // Draw coordinate conversion example
+                    Gizmos.color = Color.red;
+                    Gizmos.DrawWireSphere(sampleVertex, 0.5f);
+                    
+                    Gizmos.color = Color.blue;
+                    Gizmos.DrawWireSphere(recastVertex, 0.3f);
+                    
+                    Gizmos.color = Color.green;
+                    Gizmos.DrawWireSphere(unityVertex, 0.1f);
+                }
+            }
         }
         
         private void OnValidate()

@@ -395,10 +395,24 @@ namespace RecastNavigation.Unity
                     for (int j = 0; j < poly.vertCount; j++)
                     {
                         int vertIndex = poly.verts[j] * 3;
-                        polygon.vertices[j] = new Vector3(
+                        Vector3 originalVertex = new Vector3(
                             vertices[vertIndex],
                             vertices[vertIndex + 1],
                             vertices[vertIndex + 2]
+                        );
+                        
+                        // Apply Y-axis 180 degree rotation and Z-axis inversion
+                        // Create rotation matrix for Y-axis 180 degree rotation
+                        Matrix4x4 rotationMatrix = Matrix4x4.Rotate(Quaternion.Euler(0, 180, 0));
+                        
+                        // Apply Y-axis 180 degree rotation
+                        Vector3 rotatedVertex = rotationMatrix.MultiplyPoint3x4(originalVertex);
+                        
+                        // Apply Z-axis inversion
+                        polygon.vertices[j] = new Vector3(
+                            rotatedVertex.x,
+                            rotatedVertex.y,
+                            -rotatedVertex.z
                         );
                     }
                     
@@ -491,6 +505,35 @@ namespace RecastNavigation.Unity
             Bounds bounds = new Bounds();
             bounds.SetMinMax(min, max);
             return bounds;
+        }
+        
+        // Utility method to convert Unity coordinates to RecastNavigation coordinates
+        public static Vector3 UnityToRecast(Vector3 unityPos)
+        {
+            // Apply Y-axis 180 degree rotation and Z-axis inversion
+            Matrix4x4 rotationMatrix = Matrix4x4.Rotate(Quaternion.Euler(0, 180, 0));
+            Vector3 rotatedVertex = rotationMatrix.MultiplyPoint3x4(unityPos);
+            
+            return new Vector3(
+                rotatedVertex.x,
+                rotatedVertex.y,
+                -rotatedVertex.z
+            );
+        }
+        
+        // Utility method to convert RecastNavigation coordinates to Unity coordinates
+        public static Vector3 RecastToUnity(Vector3 recastPos)
+        {
+            // Apply Z-axis inversion first, then Y-axis 180 degree rotation (inverse)
+            Vector3 invertedPos = new Vector3(
+                recastPos.x,
+                recastPos.y,
+                -recastPos.z
+            );
+            
+            // Apply inverse Y-axis 180 degree rotation
+            Matrix4x4 rotationMatrix = Matrix4x4.Rotate(Quaternion.Euler(0, 180, 0));
+            return rotationMatrix.MultiplyPoint3x4(invertedPos);
         }
         
         public static void UnloadNavMesh(NavMeshData navMeshData)
