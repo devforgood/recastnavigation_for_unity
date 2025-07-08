@@ -16,7 +16,7 @@ namespace RecastNavigation.Unity
         [SerializeField] private Color navMeshColor = Color.green;
         [SerializeField] private Color walkableColor = Color.blue;
         [SerializeField] private Color unwalkableColor = Color.red;
-        [SerializeField] private float lineWidth = 2.0f;
+        [SerializeField] private float lineWidth = 0.05f; // 기존 2.0f에서 변경
         [SerializeField] private bool showPolygonCenters = false;
         [SerializeField] private float centerMarkerSize = 0.5f;
         
@@ -116,8 +116,7 @@ namespace RecastNavigation.Unity
                 {
                     LineRenderer lineRenderer = polyObj.AddComponent<LineRenderer>();
                     lineRenderer.material = lineMaterial;
-                    lineRenderer.startWidth = lineWidth;
-                    lineRenderer.endWidth = lineWidth;
+                    lineRenderer.widthMultiplier = lineWidth; // startWidth/endWidth 대신 widthMultiplier 사용
                     lineRenderer.startColor = navMeshColor;
                     lineRenderer.endColor = navMeshColor;
                     lineRenderer.useWorldSpace = true;
@@ -162,14 +161,22 @@ namespace RecastNavigation.Unity
         {
             GameObject meshObj = new GameObject("PolygonMesh");
             meshObj.transform.SetParent(parent.transform);
-            
+
             MeshFilter meshFilter = meshObj.AddComponent<MeshFilter>();
             MeshRenderer meshRenderer = meshObj.AddComponent<MeshRenderer>();
-            
+
+            // Y축 오프셋 적용
+            float yOffset = 0.1f;
+            Vector3[] offsetVertices = new Vector3[vertices.Length];
+            for (int i = 0; i < vertices.Length; i++)
+            {
+                offsetVertices[i] = vertices[i] + new Vector3(0, yOffset, 0);
+            }
+
             // Create mesh
             Mesh mesh = new Mesh();
-            mesh.vertices = vertices;
-            
+            mesh.vertices = offsetVertices;
+
             // Create triangles (simple triangulation for convex polygons)
             int[] triangles = new int[(vertices.Length - 2) * 3];
             for (int i = 0; i < vertices.Length - 2; i++)
@@ -179,16 +186,17 @@ namespace RecastNavigation.Unity
                 triangles[i * 3 + 2] = i + 2;
             }
             mesh.triangles = triangles;
-            
+
             // Calculate normals
             mesh.RecalculateNormals();
-            
+
             meshFilter.mesh = mesh;
-            
-            // Create material
+
+            // Create material (반투명)
             Material material = new Material(Shader.Find("Standard"));
+            color.a = 0.5f; // 반투명
             material.color = color;
-            material.SetFloat("_Mode", 3); // Transparent mode
+            material.SetFloat("_Mode", 3); // Transparent 모드
             material.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
             material.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
             material.SetInt("_ZWrite", 0);
@@ -196,7 +204,7 @@ namespace RecastNavigation.Unity
             material.EnableKeyword("_ALPHABLEND_ON");
             material.DisableKeyword("_ALPHAPREMULTIPLY_ON");
             material.renderQueue = 3000;
-            
+
             meshRenderer.material = material;
         }
         
