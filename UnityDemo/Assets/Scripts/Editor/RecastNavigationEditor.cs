@@ -8,7 +8,7 @@ namespace RecastNavigation.Unity
     public class RecastNavigationEditor : EditorWindow
     {
         private string objFilePath = "";
-        private string outputPath = "";
+        private string outputPath = "Assets/GeneratedNavMeshes";
         private bool showAdvancedSettings = false;
         
         // NavMesh generation parameters
@@ -52,10 +52,9 @@ namespace RecastNavigation.Unity
         
         private void OnEnable()
         {
-            // Set default output path
             if (string.IsNullOrEmpty(outputPath))
             {
-                outputPath = Path.Combine(Application.dataPath, "GeneratedNavMeshes");
+                outputPath = "Assets/GeneratedNavMeshes";
             }
         }
         
@@ -104,13 +103,21 @@ namespace RecastNavigation.Unity
             
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("Output Path:", GUILayout.Width(100));
-            EditorGUILayout.TextField(outputPath, GUILayout.ExpandWidth(true));
+            outputPath = EditorGUILayout.TextField(outputPath, GUILayout.ExpandWidth(true));
             if (GUILayout.Button("Browse", GUILayout.Width(60)))
             {
-                string path = EditorUtility.SaveFolderPanel("Select Output Directory", "", "");
+                string path = EditorUtility.SaveFolderPanel("Select Output Directory", Application.dataPath, "");
                 if (!string.IsNullOrEmpty(path))
                 {
-                    outputPath = path;
+                    // Assets 이하 상대경로로 변환
+                    if (path.StartsWith(Application.dataPath))
+                    {
+                        outputPath = "Assets" + path.Substring(Application.dataPath.Length).Replace("\\", "/");
+                    }
+                    else
+                    {
+                        outputPath = path;
+                    }
                 }
             }
             EditorGUILayout.EndHorizontal();
