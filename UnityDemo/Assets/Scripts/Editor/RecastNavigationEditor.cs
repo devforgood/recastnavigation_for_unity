@@ -36,6 +36,14 @@ namespace RecastNavigation.Unity
         private Vector2 scrollPosition;
         private NavMeshData currentNavMeshData;
         
+        // OBJ Export settings
+        private int selectedExportMode = 1; // 0: Separate, 1: Whole Single (default), 2: Each Single
+        private readonly string[] exportModeOptions = {
+            "Export Selection To Separate Files",
+            "Export Whole Selection To Single File", 
+            "Export Each Selection To Single File"
+        };
+        
         [MenuItem("Tools/RecastNavigation/Open NavMesh Generator")]
         public static void ShowWindow()
         {
@@ -59,10 +67,31 @@ namespace RecastNavigation.Unity
             EditorGUILayout.LabelField("RecastNavigation NavMesh Generator", EditorStyles.boldLabel);
             EditorGUILayout.Space();
             
+            // OBJ Export Tools (at the top)
+            EditorGUILayout.LabelField("OBJ Export Tools", EditorStyles.boldLabel);
+            EditorGUILayout.HelpBox("Select objects in the scene to export them as OBJ files.", MessageType.Info);
+            EditorGUILayout.Space();
+            
+            // Check if any objects are selected
+            bool hasSelection = Selection.transforms.Length > 0;
+            
+            // Export mode selection
+            selectedExportMode = EditorGUILayout.Popup("Export Mode:", selectedExportMode, exportModeOptions);
+            
+            GUI.enabled = hasSelection;
+            if (GUILayout.Button("Export OBJ", GUILayout.Height(30)))
+            {
+                ExportOBJ();
+            }
+            GUI.enabled = true;
+            
+            EditorGUILayout.Space();
+            EditorGUILayout.Space();
+            
             // File selection
             EditorGUILayout.BeginHorizontal();
             EditorGUILayout.LabelField("OBJ File:", GUILayout.Width(100));
-            EditorGUILayout.TextField(objFilePath, GUILayout.ExpandWidth(true));
+            objFilePath = EditorGUILayout.TextField(objFilePath, GUILayout.ExpandWidth(true));
             if (GUILayout.Button("Browse", GUILayout.Width(60)))
             {
                 string path = EditorUtility.OpenFilePanel("Select OBJ File", "", "obj");
@@ -155,6 +184,44 @@ namespace RecastNavigation.Unity
             }
             
             EditorGUILayout.EndScrollView();
+        }
+        
+        private void ExportOBJ()
+        {
+            string exportedFilePath = "";
+            
+            switch (selectedExportMode)
+            {
+                case 0:
+                    exportedFilePath = ObjExportor.ExportSelectionToSeparate();
+                    break;
+                case 1:
+                    exportedFilePath = ObjExportor.ExportWholeSelectionToSingle();
+                    break;
+                case 2:
+                    exportedFilePath = ObjExportor.ExportEachSelectionToSingle();
+                    break;
+                default:
+                    exportedFilePath = ObjExportor.ExportWholeSelectionToSingle();
+                    break;
+            }
+            
+            // Export가 성공적으로 완료되면 OBJ File 필드에 경로 설정
+            if (!string.IsNullOrEmpty(exportedFilePath) && File.Exists(exportedFilePath))
+            {
+                // 절대경로라면 Assets/GeneratedObj/xxx.obj 형태로 변환
+                if (exportedFilePath.StartsWith(Application.dataPath))
+                {
+                    string relPath = "Assets" + exportedFilePath.Substring(Application.dataPath.Length).Replace("\\", "/");
+                    objFilePath = relPath;
+                }
+                else
+                {
+                    objFilePath = exportedFilePath;
+                }
+                Debug.Log($"Exported OBJ file path set to: {objFilePath}");
+                Repaint();
+            }
         }
         
         private void GenerateNavMesh()
